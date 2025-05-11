@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import random
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
@@ -19,8 +20,12 @@ k = 0
 conn = sqlite3.connect('fishing.db', check_same_thread=False)
 cursor = conn.cursor()
 
+fish = ["fish_1", "fish_2", "fish_3"]
+
 def setup_db():
-    cursor.execute('CREATE TABLE IF NOT EXISTS Users (user_id STRING, last_location STRING, inventory STRING)')
+    cursor.execute('CREATE TABLE IF NOT EXISTS Users (user_id STRING, last_location STRING)')
+    conn.commit()
+    cursor.execute('CREATE TABLE IF NOT EXISTS Users_inventory (user_id STRING, fish_1 INTEGER, fish_2 INTEGER, fish_3 INTEGER)')
     conn.commit()
 
 @dp.message(CommandStart())
@@ -31,6 +36,7 @@ async def start(message: Message):
         s = cursor.execute(f'SELECT * FROM Users WHERE user_id = {user_id}').fetchall()
         if len(s) == 0:
             cursor.execute(f'INSERT INTO Users (user_id, last_location) VALUES ({user_id}, NULL)')
+            cursor.execute(f'INSERT INTO Users_inventory (user_id, fish_1, fish_2, fish_3) VALUES ({user_id}, 0, 0, 0)')
         k += 1
         await cmd_menu_start(message)
     elif k != 0:
@@ -58,8 +64,14 @@ async def cmd_fishing(message: Message):
     reply_keyboard = [[]]
     kb = ReplyKeyboardMarkup(keyboard=reply_keyboard, resize_keyboard=True, one_time_keyboard=False)
     await message.answer("test", reply_markup=kb)
-
-
+'''
+    await asyncio.sleep(2)
+    r = random.choice(fish)
+    f = cursor.execute(f"SELECT {r} FROM Users_inventory WHERE user_id = {user_id}").fetchone()[0]
+    f += 1
+    cursor.execute(f"UPDATE Users_inventory SET {r} = {f} WHERE user_id = {user_id}")
+    conn.commit()
+'''
 async def cmd_shop(message: Message):
     user_id = message.from_user.id
     cursor.execute(f"UPDATE Users SET last_location = 'shop' WHERE user_id = {user_id}")
