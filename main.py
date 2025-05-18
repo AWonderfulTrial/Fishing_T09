@@ -7,7 +7,7 @@ from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import Message, FSInputFile
-from aiogram.types import ReplyKeyboardRemove, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import ReplyKeyboardRemove, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup
 import sqlite3
 
 
@@ -33,6 +33,7 @@ code = str(random.randint(10000000, 99999999))
 code_first_part = code[0:4]
 code_second_part = code[4:9]
 
+bot = Bot(token=BOT_TOKEN)
 
 all_collection = [
     {
@@ -89,7 +90,19 @@ relics = [item["nickname"] for item in all_collection]
 relics_names = [item["name"] for item in all_collection]
 relic_chances = [0.25, 0.20, 0.18, 0.15, 0.12, 0.08, 0.02]
 
+shop_items_ids = ["stick_fishing_rod", "rusty_reel_fishing_rod",
+        "woven_willow_fishing_rod", "copper_catcher_fishing_rod", "frostbite_fisher_fishing_rod", "emberflow_fishing_rod",
+        "moonlit_mender_fishing_rod", "serpentspine_fishing_rod", "thunderlord_fishing_rod", "leviathans_grasp_fishing_rod",
+        "phoenixfeather_fishing_rod", "abyssal_whisper_fishing_rod", "celestial_harpoon_fishing_rod", "eternaltide_fishing_rod",
+        "neptunes_trident_fishing_rod", "underwater_flashlight", "diving_suit"]
 
+shop_item_nicknames_1 = rod_infocursor.execute("SELECT nickname FROM fishing_rod_info").fetchall()
+shop_item_nicknames = [element[0] for element in shop_item_nicknames_1]
+shop_item_nicknames.extend(["Подводный фонарик", "Подводный костюм"])
+
+shop_item_prices_1 = rod_infocursor.execute("SELECT price FROM fishing_rod_info").fetchall()
+shop_item_prices = [element[0] for element in shop_item_prices_1]
+shop_item_prices.extend([300, 500])
 
 def setup_db():
     infocursor.execute('CREATE TABLE IF NOT EXISTS Users_info (user_id STRING, last_location STRING, code STRING, current_fishing_rod STRING)')
@@ -151,7 +164,6 @@ async def cmd_fishing(message: Message):
     kb = ReplyKeyboardMarkup(keyboard=reply_keyboard, resize_keyboard=True, one_time_keyboard=False)
     await message.answer("РЫБАЛКА", reply_markup=kb)
 
-
 async def cmd_fishing_in_process(message: Message):
     global catches
     global relics
@@ -169,10 +181,9 @@ async def cmd_fishing_in_process(message: Message):
         "SELECT time_sec FROM fishing_rod_info WHERE rod_id = ?",
         (current_fishing_rod,)
     ).fetchone()[0]
-
-    await message.answer(f"Время ожидания: {time} секунд", reply_markup=ReplyKeyboardRemove())
+    msg = await message.answer(f"Время ожидания: {time} секунд", reply_markup=ReplyKeyboardRemove())
     await asyncio.sleep(time)
-    await message.bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+    await msg.delete()
 
     chances_row = rod_infocursor.execute(
         "SELECT * FROM fishing_rod_info WHERE rod_id = ?",
@@ -217,7 +228,6 @@ async def cmd_fishing_in_process(message: Message):
         await message.answer(f"Вы поймали {r}!" + (" А ещё это двойной улов!" if add_count > 1 else ""),
                              reply_markup=kb)
 
-
 async def cmd_select_fishing_rod(message: Message):
     user_id = message.from_user.id
     infocursor.execute("UPDATE Users_info SET last_location = 'select_fishing_rod' WHERE user_id = ?", (user_id,))
@@ -229,87 +239,82 @@ async def cmd_select_fishing_rod(message: Message):
             (user_id,)
         ).fetchone()[0]
 
-        itemcursor.execute("SELECT * FROM Users_inventory WHERE user_id = ?", (user_id,))
-        inventory = itemcursor.fetchone()
-        columns = [col[0] for col in itemcursor.description]
-        rods = []
-        for idx, col in enumerate(columns):
-            if "_fishing_rod" in col and inventory[idx] > 0:
-                rods.append(col)
-        available_rods = []
-        for rod_id in rods:
-            rod_info = rod_infocursor.execute(
+        itemcursor.execute("PRAGMA table_info(Users_inventory)")
+        columns = [col[1] for col in itemcursor.fetchall() if "_fishing_rod" in col[1]]
+
+        rods_query = f"SELECT {', '.join(columns)} FROM Users_inventory WHERE user_id = ?"
+        itemcursor.execute(rods_query, (user_id,))
+        owned_rods = [col for col, val in zip(columns, itemcursor.fetchone()) if val > 0]
+
+        rod_buttons = []
+        for rod_id in owned_rods:
+            rod_name = rod_infocursor.execute(
                 "SELECT nickname FROM fishing_rod_info WHERE rod_id = ?",
                 (rod_id,)
-            ).fetchone()
-            if rod_info:
-                display_name = rod_info[0]
-                if rod_id == current_rod:
-                    display_name += " ✅"
-                available_rods.append((rod_id, display_name))
-        keyboard = []
-        for rod_id, display_name in available_rods:
-            keyboard.append([KeyboardButton(text=display_name)])
+            ).fetchone()[0]
 
-        keyboard.append([KeyboardButton(text='⏪ВЕРНУТЬСЯ⏪')])
+            display_name = f"{rod_name} ✅" if rod_id == current_rod else rod_name
+            rod_buttons.append([KeyboardButton(text=display_name)])
 
-        kb = ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+        rod_buttons.append([KeyboardButton(text='⏪ВЕРНУТЬСЯ⏪')])
+        kb = ReplyKeyboardMarkup(keyboard=rod_buttons, resize_keyboard=True)
 
-        if len(available_rods) == 0:
-            await message.answer("У вас нет доступных удочек!\nПриобретите их в магазине.", reply_markup=kb)
-        else:
-            await message.answer("Выберите удочку:", reply_markup=kb)
+        await message.answer(
+            "🎣 Выберите удочку:" if rod_buttons else "❌ У вас нет доступных удочек!",
+            reply_markup=kb
+        )
 
     except Exception as e:
-        logger.error(f"Ошибка при выборе удочки: {e}")
-        await message.answer("⚠️ Произошла ошибка при загрузке удочек")
+        logging.error(f"Rod selection error: {e}")
+        await message.answer("⚠️ Ошибка загрузки удочек", reply_markup=ReplyKeyboardRemove())
 
-
-@dp.message(F.text.in_([rod['nickname'] + " ✅" for rod in rods_data]))
+@dp.message(F.text.endswith('✅'))
 async def handle_rod_selection(message: Message):
     user_id = message.from_user.id
-    selected_name = message.text.replace(" ✅", "").strip()
+    selected_name = message.text.replace(' ✅', '').strip()
 
     try:
-        rod_id = rod_infocursor.execute(
+        rod_id, = rod_infocursor.execute(
             "SELECT rod_id FROM fishing_rod_info WHERE nickname = ?",
             (selected_name,)
-        ).fetchone()[0]
+        ).fetchone()
 
         has_rod = itemcursor.execute(
             f"SELECT {rod_id} FROM Users_inventory WHERE user_id = ?",
             (user_id,)
         ).fetchone()[0]
 
-        if has_rod > 0:
+        if has_rod:
             infocursor.execute(
                 "UPDATE Users_info SET current_fishing_rod = ? WHERE user_id = ?",
                 (rod_id, user_id)
             )
             conn_info.commit()
-            await message.answer(f"Удочка успешно изменена на: {selected_name}!")
+            await message.answer(f"⚡ Активная удочка изменена на: {selected_name}!")
             await cmd_fishing(message)
-        else:
-            await message.answer("❌ Эта удочка отсутствует в вашем инвентаре!")
 
+    except TypeError:
+        await message.answer("❌ Удочка не найдена в базе данных!")
     except Exception as e:
-        logger.error(f"Ошибка смены удочки: {e}")
-        await message.answer("⚠️ Произошла ошибка при смене удочки")
+        logging.error(f"Rod change error: {e}")
+        await message.answer("⚠️ Ошибка смены удочки", reply_markup=ReplyKeyboardRemove())
 
-    kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='⏪ВЕРНУТЬСЯ⏪')]], resize_keyboard=True)
-    await message.answer("test", reply_markup=kb)
 async def cmd_shop(message: Message):
     user_id = message.from_user.id
     infocursor.execute(f"UPDATE Users_info SET last_location = 'shop' WHERE user_id = {user_id}")
     conn_info.commit()
-    reply_keyboard = [[KeyboardButton(text='⏪ВЕРНУТЬСЯ⏪')]]
-    kb = ReplyKeyboardMarkup(keyboard=reply_keyboard, resize_keyboard=True, one_time_keyboard=False)
-
+    reply_keyboard = []
+    for i in range(len(shop_items_ids)):
+        shop_text = f"КУПИТЬ {shop_item_nicknames[i]} ЗА {shop_item_prices[i]} COINS"
+        reply_keyboard.append([KeyboardButton(text=shop_text)])
+    reply_keyboard.append([KeyboardButton(text='⏪ВЕРНУТЬСЯ⏪')])
+    kb = ReplyKeyboardMarkup(keyboard=reply_keyboard, resize_keyboard=True)
     await message.answer("МАГАЗИН", reply_markup=kb)
 
 async def cmd_inventory(message: Message):
     user_id = message.from_user.id
-
+    infocursor.execute(f"UPDATE Users_info SET last_location = 'inventory' WHERE user_id = {user_id}")
+    conn_info.commit()
     itemcursor.execute("PRAGMA table_info(Users_inventory)")
     columns = [column[1] for column in itemcursor.fetchall()][1:]
 
@@ -330,7 +335,6 @@ async def cmd_collections(message: Message):
     infocursor.execute(f"UPDATE Users_info SET last_location = 'collections' WHERE user_id = {user_id}")
     conn_info.commit()
 
-    # Получаем список всех реликвий пользователя
     itemcursor.execute(f"""
         SELECT treasure_map, golden_chalice, ancient_compass, 
                audio_tape01, audio_tape02, audio_tape03, unknown 
@@ -339,18 +343,16 @@ async def cmd_collections(message: Message):
     """)
     relics_counts = itemcursor.fetchone()
 
-    # Формируем клавиатуру
     keyboard = []
     for i, relic in enumerate(all_collection):
         if relics_counts[i] > 0:
             keyboard.append([KeyboardButton(text=relic['name'])])
 
-    # Добавляем кнопку возврата в конец
     keyboard.append([KeyboardButton(text='⏪ВЕРНУТЬСЯ⏪')])
 
     kb = ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
-    if len(keyboard) == 1:  # Только кнопка возврата
+    if len(keyboard) == 1:
         await message.answer("Здесь пока что ничего нет... Собирайте реликвии чтобы они тут были!", reply_markup=kb)
     else:
         await message.answer("КОЛЛЕКЦИИ", reply_markup=kb)
@@ -361,7 +363,6 @@ async def handle_collection_item(message: Message):
     user_id = message.from_user.id
     item_name = message.text
 
-    # Ищем выбранную реликвию в коллекции
     selected_relic = next((item for item in all_collection if item['name'] == item_name), None)
 
     if not selected_relic:
@@ -481,6 +482,24 @@ async def handle_buttons(message: Message):
     elif location[0] == 'shop':
         if message.text == '⏪ВЕРНУТЬСЯ⏪':
             await cmd_menu_start(message)
+        elif message.text:
+            for i in range(len(shop_item_nicknames)):
+                if shop_item_nicknames[i] in message.text and str(shop_item_prices[i]) in message.text:
+                    y = shop_item_nicknames[i]
+                    u = shop_item_prices[i]
+                    l = 1
+                    break
+            coins = itemcursor.execute(f"SELECT coins FROM Users_inventory where user_id = {user_id}").fetchone()[0]
+            if coins >= u:
+                coins -= u
+                itemcursor.execute(f"UPDATE Users_inventory SET coins = {coins}, {shop_items_ids[l]} = {shop_items_ids[l]} + 1 WHERE user_id = {user_id}")
+                conn_inventory.commit()
+                await message.answer(f"Вы успешно купили {y} за {u} COINS! У вас осталось {coins} монет в кошельке!")
+                await cmd_shop(message)
+            else:
+                await message.answer(f"У вас не хватает средств на покупку!")
+
+
     elif location[0] == 'inventory':
         if message.text == '💵ПРОДАТЬ ВСЮ РЫБУ💵':
             try:
@@ -542,7 +561,6 @@ async def handle_buttons(message: Message):
 
 
 async def main():
-    bot = Bot(token=BOT_TOKEN)
     setup_db()
     await dp.start_polling(bot)
 
